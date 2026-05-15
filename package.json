@@ -2,11 +2,15 @@
   "name": "smart-attendance-mvp",
   "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "start": "cd frontend && npm run start",
-    "install:all": "cd frontend && npm install --legacy-peer-deps"
+    "dev": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend",
+    "start": "npm run start --workspace=frontend",
+    "install:all": "npm install"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
