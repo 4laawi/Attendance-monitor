@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  TEACHER
+  STUDENT
+  PARENT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum JustificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  role          Role      @default(STUDENT)
+  avatarUrl     String?
+  phoneNumber   String?
+  
+  // Relations
+  departmentId  String?
+  department    Department? @relation(fields: [departmentId], references: [id])
+  
+  classId       String?
+  class         Class?      @relation(fields: [classId], references: [id])
+  
+  attendances   Attendance[]
+  justifications Justification[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  
+  // For Teachers
+  managedClasses Class[]    @relation("TeacherClasses")
+  sessions       Session[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  users       User[]
+  classes     Class[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Class {
+  id            String      @id @default(uuid())
+  name          String
+  departmentId  String
+  department    Department  @relation(fields: [departmentId], references: [id])
+  students      User[]
+  teacherId     String?
+  teacher       User?       @relation("TeacherClasses", fields: [teacherId], references: [id])
+  sessions      Session[]
+  schedules     Schedule[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model Session {
+  id          String      @id @default(uuid())
+  title       String
+  startTime   DateTime
+  endTime     DateTime
+  classId     String
+  class       Class       @relation(fields: [classId], references: [id])
+  teacherId   String
+  teacher     User        @relation(fields: [teacherId], references: [id])
+  
+  qrCode      String?     @unique // Secure dynamic QR token
+  qrExpiresAt DateTime?
+  
+  attendances Attendance[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Schedule {
+  id          String   @id @default(uuid())
+  dayOfWeek   Int      // 0-6
+  startTime   String   // "HH:mm"
+  endTime     String   // "HH:mm"
+  classId     String
+  class       Class    @relation(fields: [classId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Attendance {
+  id          String           @id @default(uuid())
+  status      AttendanceStatus @default(ABSENT)
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  sessionId   String
+  session     Session          @relation(fields: [sessionId], references: [id])
+  
+  markedBy    String?          // User ID who marked it
+  markedAt    DateTime?
+  location    String?          // Geolocation data
+  
+  justification Justification?
+  
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([userId, sessionId])
+}
+
+model Justification {
+  id            String              @id @default(uuid())
+  reason        String
+  documentUrl   String?
+  status        JustificationStatus @default(PENDING)
+  attendanceId  String              @unique
+  attendance    Attendance          @relation(fields: [attendanceId], references: [id])
+  userId        String
+  user          User                @relation(fields: [userId], references: [id])
+  
+  reviewedBy    String?
+  reviewComment String?
+  
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  type      String   // ABSENCE, SYSTEM, ANNOUNCEMENT
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  details   String?  // JSON string
+  timestamp DateTime @default(now())
+}
