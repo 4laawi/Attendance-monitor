@@ -228,7 +228,7 @@ export async function validateToken(token: string): Promise<AttendanceSession | 
 
 /** 
  * Closes an attendance session and marks all enrolled students who didn't scan as 'absent'.
- * Only students who have a registered account (matching email) can be marked absent.
+ * Only students who have a registered account (matching email) can be marked absent in the database.
  */
 export async function closeAttendanceSession(sessionId: string, classId: string): Promise<void> {
   // 1. Mark session as expired
@@ -276,18 +276,21 @@ export async function closeAttendanceSession(sessionId: string, classId: string)
 
   if (absentStudents.length > 0) {
     // 6. Insert absent records
+    // NOTE: This might fail if the teacher doesn't have RLS permission to insert for others.
+    // However, we still try to do it for database integrity.
     const { error: absentError } = await supabase
       .from('attendance_records')
-      .insert(
+      .upsert(
         absentStudents.map(p => ({
           session_id: sessionId,
           student_id: p.id,
           status: 'absent'
-        }))
+        })),
+        { onConflict: 'session_id, student_id' }
       );
 
     if (absentError) {
-      console.error('Error marking absent students:', absentError);
+      console.warn('Could not mark students as absent in DB (likely RLS). Report will still be generated via frontend merge.', absentError);
     }
   }
 }
@@ -326,9 +329,13 @@ export async function submitAttendance(token: string): Promise<{ success: boolea
   return { success: true, message: 'Attendance marked successfully!' };
 }
 
-/** Fetch all attendance records for a session with student profile info */
-export async function fetchAttendanceForSession(sessionId: string): Promise<AttendanceRecord[]> {
-  const { data, error } = await supabase
+/** 
+ * Fetch all attendance records for a session and merge with enrolled students 
+ * to show who is absent (including those without accounts).
+ */
+export async function fetchAttendanceForSession(sessionId: string, classId?: string): Promise<AttendanceRecord[]> {
+  // 1. Fetch existing records (present/absent)
+  const { data: records, error: recordsError } = await supabase
     .from('attendance_records')
     .select(`
       id, session_id, student_id, status, marked_at,
@@ -336,19 +343,64 @@ export async function fetchAttendanceForSession(sessionId: string): Promise<Atte
     `)
     .eq('session_id', sessionId);
 
-  if (error) throw error;
+  if (recordsError) throw recordsError;
 
-  return (data || []).map((r: any) => ({
+  const existingRecords = (records || []).map((r: any) => ({
     id: r.id,
     session_id: r.session_id,
     student_id: r.student_id,
-    student_name: `${r.app_profiles?.first_name || ''} ${r.app_profiles?.last_name || ''}`.trim() || r.app_profiles?.email || 'Unknown',
+    student_name: `${r.app_profiles?.first_name || r.app_profiles?.last_name ? (r.app_profiles?.first_name || '' + ' ' + r.app_profiles?.last_name || '').trim() : r.app_profiles?.email || 'Unknown'}`,
     student_first_name: r.app_profiles?.first_name || '',
     student_last_name: r.app_profiles?.last_name || '',
     student_email: r.app_profiles?.email || '',
-    status: r.status,
+    status: r.status as 'present' | 'absent',
     marked_at: r.marked_at,
   }));
+
+  // 2. If classId is provided, merge with ALL enrolled students to identify gaps
+  if (classId) {
+    const enrolled = await fetchClassStudents(classId);
+    
+    // Create a map of existing records by email for easy lookup
+    const recordsByEmail = new Map<string, AttendanceRecord>();
+    existingRecords.forEach(r => {
+      if (r.student_email) recordsByEmail.set(r.student_email.toLowerCase(), r);
+    });
+
+    const finalReport: AttendanceRecord[] = [];
+
+    enrolled.forEach(student => {
+      const email = student.student_email?.toLowerCase();
+      const existing = email ? recordsByEmail.get(email) : null;
+
+      if (existing) {
+        finalReport.push(existing);
+      } else {
+        // Not in attendance_records, so they are ABSENT
+        finalReport.push({
+          id: `missing-${student.id}`,
+          session_id: sessionId,
+          student_id: '', // No account yet
+          student_name: student.student_name,
+          student_email: student.student_email || '',
+          status: 'absent',
+          marked_at: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Also add any records that didn't match an enrolled email (extra students)
+    const enrolledEmails = new Set(enrolled.map(s => s.student_email?.toLowerCase()).filter(Boolean));
+    existingRecords.forEach(r => {
+      if (r.student_email && !enrolledEmails.has(r.student_email.toLowerCase())) {
+        finalReport.push(r);
+      }
+    });
+
+    return finalReport.sort((a, b) => a.student_name.localeCompare(b.student_name));
+  }
+
+  return existingRecords;
 }
 
 /** Dashboard stats: all classes with present/absent counts */

@@ -55,10 +55,11 @@ export default function AttendancePage() {
 
   // Load records for active session
   const loadRecords = async () => {
-    if (!session || isClosing || isSummaryMode) return;
+    if (!session || isClosing) return;
     setLoadingRecords(true);
     try {
-      const data = await fetchAttendanceForSession(session.id);
+      // Pass the class ID to get a full report (including absent students)
+      const data = await fetchAttendanceForSession(session.id, selectedClass?.id);
       setRecords(data);
     } catch (err) {
       console.error('Error loading records', err);
@@ -95,7 +96,7 @@ export default function AttendancePage() {
       try {
         await closeAttendanceSession(session.id, selectedClass.id);
         // Fetch final records including the newly marked absent ones
-        const finalData = await fetchAttendanceForSession(session.id);
+        const finalData = await fetchAttendanceForSession(session.id, selectedClass.id);
         setRecords(finalData);
         setIsSummaryMode(true);
       } catch (err) {
